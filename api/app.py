@@ -91,8 +91,8 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
     except (UnidentifiedImageError, OSError):
         raise HTTPException(status_code=400, detail="The uploaded file is not a valid image")
     array = np.asarray(image, dtype=np.float32)
-    # MobileNetV2 preprocessing: map RGB values from [0, 255] to [-1, 1].
-    array = (array / 127.5) - 1.0
+    # Preprocessing is embedded in the exported model (Rescaling to [-1, 1]).
+    # Send RGB pixel values in [0, 255] to avoid applying MobileNetV2 scaling twice.
     probabilities = np.asarray(_model.predict(np.expand_dims(array, axis=0), verbose=0))[0]
     if probabilities.ndim != 1 or len(probabilities) != len(_classes):
         raise HTTPException(status_code=500, detail="Model returned an unexpected output shape")
