@@ -99,4 +99,4 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
     top_indices = np.argsort(probabilities)[::-1][:5]
     top = [{"class": _classes[int(i)], "confidence": float(probabilities[i])} for i in top_indices]
     best = top[0]
-    return {"prediction": best["class"], "confidence": best["confidence"], "top_predictions": top}
+    return {"prediction": best["class"], "predicted_class": best["class"], "confidence": best["confidence"], "model_name": "MobileNetV2", "top_predictions": [{"class": item["class"], "class_name": item["class"], "confidence": item["confidence"]} for item in top]}
