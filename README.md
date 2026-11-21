@@ -26,3 +26,9 @@ uvicorn api.app:app --host 0.0.0.0 --port 7860
 ```
 
 The production container uses the same command. Configure CORS with `ALLOWED_ORIGINS` if the frontend origin changes.
+
+## Response contracts
+
+`POST /predict` returns `predicted_class`, `confidence` (0–1), `model_name`, and `top_predictions` entries with `class_name` and `confidence`.
+
+`GET /metrics` expects `accuracy`, `precision`, `recall`, and `f1` as fractions from 0 to 1, plus optional `split`, `samples`, and `model_name` fields. These must come from evaluation on the official labeled validation split.
