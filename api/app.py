@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,10 @@ ARTIFACTS = BASE_DIR / "artifacts"
 MODEL_PATH = ARTIFACTS / "mobilenetv2.keras"
 CLASSES_PATH = ARTIFACTS / "classes.json"
 METRICS_PATH = ARTIFACTS / "metrics.json"
+RELEASE_BASE = "https://github.com/zipgirl/butterfly-classifier-api/releases/download/model-v1"
+MODEL_URL = f"{RELEASE_BASE}/mobilenetv2.zip"
+CLASSES_URL = f"{RELEASE_BASE}/classes.json"
+METRICS_URL = f"{RELEASE_BASE}/metrics.json"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_SIZE = (128, 128)
 
@@ -35,14 +41,62 @@ _metrics: dict[str, Any] | None = None
 _load_error: str | None = None
 
 
+def download(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "ButterflyClassifierAPI/1.0"})
+    with urllib.request.urlopen(request, timeout=90) as response:
+        return response.read()
+
+
+def install_model_archive(archive_bytes: bytes) -> None:
+    """Turn the release ZIP into a root-level .keras archive, validating its contents."""
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        names = [name for name in archive.namelist() if not name.endswith("/")]
+        keras_files = [name for name in names if name.lower().endswith(".keras")]
+        if len(keras_files) == 1:
+            MODEL_PATH.write_bytes(archive.read(keras_files[0]))
+            return
+
+        required = {"config.json", "metadata.json", "model.weights.h5"}
+        roots = set()
+        for name in names:
+            parts = Path(name).parts
+            if parts:
+                roots.add(parts[0])
+        prefix = ""
+        if not required.issubset(set(names)) and len(roots) == 1:
+            candidate = next(iter(roots)) + "/"
+            if required.issubset({name[len(candidate):] for name in names if name.startswith(candidate)}):
+                prefix = candidate
+
+        normalized = io.BytesIO()
+        with zipfile.ZipFile(normalized, "w", compression=zipfile.ZIP_DEFLATED) as output:
+            for name in names:
+                if prefix and name.startswith(prefix):
+                    output.writestr(name[len(prefix):], archive.read(name))
+                elif not prefix:
+                    output.writestr(name, archive.read(name))
+        with zipfile.ZipFile(io.BytesIO(normalized.getvalue())) as check:
+            if not required.issubset(set(check.namelist())):
+                raise ValueError("mobilenetv2.zip does not contain a valid Keras model archive")
+        MODEL_PATH.write_bytes(normalized.getvalue())
+
+
+def ensure_artifacts() -> None:
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    if not MODEL_PATH.is_file():
+        install_model_archive(download(MODEL_URL))
+    if not CLASSES_PATH.is_file():
+        CLASSES_PATH.write_bytes(download(CLASSES_URL))
+    if not METRICS_PATH.is_file():
+        METRICS_PATH.write_bytes(download(METRICS_URL))
+
+
 def load_artifacts() -> None:
     global _model, _classes, _metrics, _load_error
     if _model is not None:
         return
-    if not (MODEL_PATH.is_file() and CLASSES_PATH.is_file() and METRICS_PATH.is_file()):
-        _load_error = "Trained model artifacts have not been installed."
-        return
     try:
+        ensure_artifacts()
         import tensorflow as tf
 
         with CLASSES_PATH.open("r", encoding="utf-8") as f:
@@ -99,4 +153,13 @@ async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
     top_indices = np.argsort(probabilities)[::-1][:5]
     top = [{"class": _classes[int(i)], "confidence": float(probabilities[i])} for i in top_indices]
     best = top[0]
-    return {"prediction": best["class"], "predicted_class": best["class"], "confidence": best["confidence"], "model_name": "MobileNetV2", "top_predictions": [{"class": item["class"], "class_name": item["class"], "confidence": item["confidence"]} for item in top]}
+    return {
+        "prediction": best["class"],
+        "predicted_class": best["class"],
+        "confidence": best["confidence"],
+        "model_name": "MobileNetV2",
+        "top_predictions": [
+            {"class": item["class"], "class_name": item["class"], "confidence": item["confidence"]}
+            for item in top
+        ],
+    }
